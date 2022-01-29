@@ -1,12 +1,12 @@
 library(rTensor)
-source('FTSVD.R')
+source('D:/Github/functional_tensor_svd/FTSVD.R')
 library(MASS)
 library(fdapace)
 library(latex2exp)
 
 ######################################################
 # Simulation 1: rank-1 functional tensor decomposition with increasing sampling 
-# study the asymtotics and only compare with CP power iteration.
+# study the asymptotics and only compare with CP power iteration.
 ######################################################
 
 set.seed(100)
@@ -16,7 +16,7 @@ n.set = c(10,30,50,100,200,400,800)
 sigma = 1
 tau = 1
 lambda = 20
-iter = 100
+iter = 2
 error_a = array(0, dim = c(length(p.set), length(n.set), iter))
 error_xi = array(0, dim = c(length(p.set), length(n.set), iter))
 error_a_CP = array(0, dim = c(length(p.set), length(n.set), iter))
@@ -85,7 +85,7 @@ p1
 
 ######################################################
 # Simulation 2: rank-1 functional tensor decomposition with increasing perturbation 
-# study the asymtotics and compare with CP power iteration and FDA.
+# study the asypmtotics and compare with CP power iteration and FDA.
 ######################################################
 
 set.seed(100)

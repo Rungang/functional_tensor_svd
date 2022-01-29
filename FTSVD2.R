@@ -1,4 +1,5 @@
 library(gtools)
+library(optiSolve)
 
 format_tfpca <- function(taxon_table, time_point, subjectID, threshold=0.8, pseudo_count=0.5){
   # format data table into a list as input for tfsvd(), 
@@ -77,9 +78,9 @@ interpolate <- function(x){
 #' @param f.grid A list recording the grids for all functional modes.
 #' @param init A list of initializations for each mode. 
 #' @param resolution A list of number and NULL indicating the desired functional resolutions.
-#' @param penalty The tuning parameter in RKHS regularized empirical risk minimization.
+#' @param Hbound The RKHS norm bound in the constraint optimization.
 #' @param t_max The maximum number for power iterations.
-FTSVD.iteration <- function(f.tensor, f.grid, init, resolution, penalty, t_max = 10){
+FTSVD.iteration <- function(f.tensor, f.grid, init, resolution, Hbound, t_max = 10){
   # Check the input validity.
   if(class(f.tensor) != "Tensor") stop("invalid input: f.tensor should be of tensor type.")
   p = dim(f.tensor)
@@ -95,19 +96,13 @@ FTSVD.iteration <- function(f.tensor, f.grid, init, resolution, penalty, t_max =
   
   # prepare the kernel and its inverse matrices.
   Kers = list()
-  Kers.inverse = list()
   for(k in 1:d){
     if (is.null(f.grid[[k]])){
       Kers = c(Kers, list(NULL))
-      Kers.inverse = c(Kers.inverse, list(NULL))
     }
     else{
       Kernel.matrix = Bernoulli.kernel(f.grid[[k]], f.grid[[k]])
       Kers = c(Kers, list(Kernel.matrix))
-      temp = eigen(Kernel.matrix, symmetric = TRUE)
-      temp$value[temp$value < 0] = 0
-      temp$value = 1/(temp$value + penalty)
-      Kers.inverse = c(Kers.inverse, list((temp$vector)%*%(t(temp$vector)*temp$value)))
     }
   }
   
@@ -121,7 +116,7 @@ FTSVD.iteration <- function(f.tensor, f.grid, init, resolution, penalty, t_max =
     for (k in 1:length(p)) {
       # tabular mode
       if (is.null(f.grid[[k]])){
-
+        
         uk = ttl(f.tensor, loadings[-k], (1:d)[-k])
         uk = k_unfold(uk, k)@data
         uk = uk / norm(uk, type='F')
@@ -134,8 +129,17 @@ FTSVD.iteration <- function(f.tensor, f.grid, init, resolution, penalty, t_max =
       # functional mode
       else {
         uk = ttl(f.tensor, loadings[-k], (1:d)[-k])
+        
         uk = k_unfold(uk, k)@data
-        beta = Kers.inverse[[k]] %*% uk
+        
+        
+        myQ = Kers[[k]] %*% Kers[[k]]
+        mya = -2*Kers[[k]] %*% uk
+        mycop = cop(f = quadfun(Q=myQ, a=mya),
+                    qc = quadcon(Q=Kers[[k]],val=Hbound))
+        res = solvecop(mycop, solver="cccp", quiet=TRUE)
+        beta = as.vector(res$x)
+        
         xi.n = Kers[[k]] %*% beta
         loadings[[k]] = t(xi.n / norm(xi.n, type='F'))
         
@@ -161,8 +165,9 @@ FTSVD.iteration <- function(f.tensor, f.grid, init, resolution, penalty, t_max =
 #' Rank-1 initialization for tabular-functional tensor data
 #' @param f.tensor An order-d tabular tensor.
 #' @param f.grid A list recording the grids for all functional modes.
+#' @param Hbound The upper bound for functional RKHS norm in optimization
 #' @return A list of loading vectors for all d modes.
-FTSVD.spectral <- function(f.tensor, f.grid, penalty){
+FTSVD.spectral <- function(f.tensor, f.grid, Hbound){
   # Check the input validity.
   if(class(f.tensor) != "Tensor") stop("invalid input: f.tensor should be of tensor type.")
   p = dim(f.tensor)
@@ -173,19 +178,13 @@ FTSVD.spectral <- function(f.tensor, f.grid, penalty){
   
   # prepare the kernel and its inverse matrices.
   Kers = list()
-  Kers.inverse = list()
   for(k in 1:d){
     if (is.null(f.grid[[k]])){
       Kers = c(Kers, list(NULL))
-      Kers.inverse = c(Kers.inverse, list(NULL))
     }
     else{
       Kernel.matrix = Bernoulli.kernel(f.grid[[k]], f.grid[[k]])
       Kers = c(Kers, list(Kernel.matrix))
-      temp = eigen(Kernel.matrix, symmetric = TRUE)
-      temp$value[temp$value < 0] = 0
-      temp$value = 1/(temp$value + penalty)
-      Kers.inverse = c(Kers.inverse, list((temp$vector)%*%(t(temp$vector)*temp$value)))
     }
   }
   
@@ -199,7 +198,15 @@ FTSVD.spectral <- function(f.tensor, f.grid, penalty){
     else{
       temp = svd(k_unfold(f.tensor, k)@data)
       uk = temp$d[1] * temp$u[,1]
-      beta = Kers.inverse[[k]] %*% uk
+      # beta = Kers.inverse[[k]] %*% uk
+      
+      # solve for a beta using constraint quadratic opt
+      myQ = Kers[[k]] %*% Kers[[k]]
+      mya = -2*Kers[[k]] %*% uk
+      mycop = cop(f = quadfun(Q=myQ, a=mya),
+                  qc = quadcon(Q=Kers[[k]],val=Hbound))
+      res = solvecop(mycop, solver="cccp", quiet=TRUE)
+      beta = as.vector(res$x)
       xi = Kers[[k]] %*% beta
       xi = as.vector( xi / norm(xi, type = 'F'))
       init = c(init, list(xi))
@@ -215,9 +222,9 @@ FTSVD.spectral <- function(f.tensor, f.grid, penalty){
 #' @param f.grid A list recording the grids for all functional modes.
 #' @param rank Tensor rank.
 #' @param resolution Resolution level for estimated functions.
-#' @param penalty Tuning parameter in regularized ERM.
-#' @param L Number of random initializations.
-FTSVD <- function(f.tensor, f.grid, rank, resolution, penalty, L = 20){
+#' @param Hbound Tuning parameter in regularized ERM.
+#' @return Lists of estimated singular values/vectors.
+FTSVD <- function(f.tensor, f.grid, rank, resolution, Hbound){
   # Check the input validity.
   if(class(f.tensor) != "Tensor") stop("invalid input: f.tensor should be of tensor type.")
   p = dim(f.tensor)
@@ -241,55 +248,48 @@ FTSVD <- function(f.tensor, f.grid, rank, resolution, penalty, L = 20){
   
   if (rank==1){
     # spectral initialization + power iteration for rank-1 estimation
-    init = FTSVD.spectral(f.tensor, f.grid, penalty)
-    results = FTSVD.iteration(f.tensor, f.grid, init, resolution, penalty)
+    init = FTSVD.spectral(f.tensor, f.grid, Hbound)
+    results = FTSVD.iteration(f.tensor, f.grid, init, resolution, Hbound)
     return(results)
   }
   else{
-    # obtain the iterated result from spectral initializations
-    
-    #a.init = svd(k_unfold(f.tensor,1)@data)$u[,1:rank]
-      
+    # obtain the iterated result from spectral initialization
+    raw.f.tensor = f.tensor
+    f.predict = NULL
     lambda = rep(0, rank)
     loadings = rep(list(NULL),d)
     for (s in 1:rank) {
-      a = svd(k_unfold(f.tensor,1)@data)$u[,1]
-      b = svd(k_unfold(ttm(f.tensor,t(a),1),2)@data)$u[,1]
-        
-        # prepare the kernel and its inverse matrices.
-      Kers = list()
-      Kers.inverse = list()
-      for(k in 1:d){
-        if (is.null(f.grid[[k]])){
-          Kers = c(Kers, list(NULL))
-          Kers.inverse = c(Kers.inverse, list(NULL))
-        }
-        else{
-          Kernel.matrix = Bernoulli.kernel(f.grid[[k]], f.grid[[k]])
-          Kers = c(Kers, list(Kernel.matrix))
-          temp = eigen(Kernel.matrix, symmetric = TRUE)
-          temp$value[temp$value < 0] = 0
-          temp$value = 1/(temp$value + penalty)
-          Kers.inverse = c(Kers.inverse, list((temp$vector)%*%(t(temp$vector)*temp$value)))
-        }
-      }
-      beta = Kers.inverse[[k]] %*% k_unfold(ttl(f.tensor,c(list(t(a)),list(t(b))),c(1,2)),3)@data
-      xi = Kers[[k]] %*% beta
-      xi = xi / norm(xi, type = 'F')
-      s.init = c(list(a),list(b),list(xi))
-      
-      s.init = FTSVD.spectral(f.tensor, f.grid, penalty)
-      s.est = FTSVD.iteration(f.tensor, f.grid, s.init, resolution, penalty)
+      s.init = FTSVD.spectral(f.tensor, f.grid, Hbound)
+      #print(s.init)
+      s.est = FTSVD.iteration(f.tensor, f.grid, s.init, resolution, Hbound)
       lambda[s] = s.est[[1]]
-      for (k in 1:(length(s.est)-2)) {
+      for (k in 1:d) {
         loadings[[k]] = cbind(loadings[[k]], s.est[[k+1]])
       }
-        
-      f.tensor = f.tensor - s.est[[k+2]]
+      
+      f.predict = cbind(f.predict, as.vector(s.est[[d+2]]@data))
+      res = lm(as.vector(raw.f.tensor@data)~f.predict-1)$residuals
+      f.tensor = as.tensor(array(res, p))
     }
     return(results = c(list(lambda), loadings))
     
   }
+}
+
+
+FTSVD.model.assess <- function(f.tensor, res, rank, tn){
+  Y_predict = NULL
+  for (i in 1:rank){
+    xi_i = res[[4]][ceiling(tn * 100 + 1)]
+    Y_predict = cbind(Y_predict, as.vector(res[[2]][,i] %o% res[[3]][,i] %o% xi_i))
+  }
+  r_sq = summary(lm(as.vector(f.tensor@data)~Y_predict-1))$r.squared
+  loss = 2*log(sum(summary(lm(as.vector(f.tensor@data)~Y_predict-1))$residuals^2))
+  p1 = dim(f.tensor)[1]
+  p2 = dim(f.tensor)[2]
+  n = dim(f.tensor)[3]
+  penalty = (p1+p2)*rank*log(p1*p2*n)/(p1*p2*n)
+  return(c(r_sq, loss+penalty))
 }
 
 CP <- function(f.tensor, f.grid, rank, resolution = 101, L = 20){
@@ -332,7 +332,7 @@ CP <- function(f.tensor, f.grid, rank, resolution = 101, L = 20){
       uk = svd(k_unfold(f.tensor, k)@data)$u[,1]
       init = c(init, list(uk))
     }
-
+    
     est = init
     # prepare the kernel and its inverse matrices.
     
@@ -349,7 +349,7 @@ CP <- function(f.tensor, f.grid, rank, resolution = 101, L = 20){
         uk = k_unfold(uk, k)@data
         uk = uk / norm(uk, type='F')
         loadings[[k]] = t(uk)
-          
+        
         if (t==10){
           est[[k]] = uk
         }
@@ -373,16 +373,16 @@ CP <- function(f.tensor, f.grid, rank, resolution = 101, L = 20){
       l.init = NULL
       Y = f.tensor
       for (k in 1:d) {
-          if (k==1){
-            # random initialization
-            uk = as.matrix(rnorm(dim(Y)[1]))
-            uk = uk / norm(uk,type = 'F')
-          }
-          else{
-            uk = svd(k_unfold(Y, k)@data)$u[,1]
-          }
-          l.init = c(l.init, list(uk))
-          Y = ttm(Y, t(uk), k)
+        if (k==1){
+          # random initialization
+          uk = as.matrix(rnorm(dim(Y)[1]))
+          uk = uk / norm(uk,type = 'F')
+        }
+        else{
+          uk = svd(k_unfold(Y, k)@data)$u[,1]
+        }
+        l.init = c(l.init, list(uk))
+        Y = ttm(Y, t(uk), k)
       }
       loadings = list()
       for (k in 1:d) {
