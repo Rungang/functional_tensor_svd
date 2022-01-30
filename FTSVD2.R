@@ -224,7 +224,7 @@ FTSVD.spectral <- function(f.tensor, f.grid, Hbound){
 #' @param resolution Resolution level for estimated functions.
 #' @param Hbound Tuning parameter in regularized ERM.
 #' @return Lists of estimated singular values/vectors.
-FTSVD <- function(f.tensor, f.grid, rank, resolution, Hbound){
+FTSVD <- function(f.tensor, f.grid, rank, resolution, Hbound=10){
   # Check the input validity.
   if(class(f.tensor) != "Tensor") stop("invalid input: f.tensor should be of tensor type.")
   p = dim(f.tensor)

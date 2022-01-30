@@ -1,5 +1,5 @@
 library(rTensor)
-source('D:/Github/functional_tensor_svd/FTSVD.R')
+source('D:/Github/functional_tensor_svd/FTSVD2.R')
 library(MASS)
 library(fdapace)
 library(latex2exp)
@@ -12,11 +12,11 @@ library(latex2exp)
 set.seed(100)
 Q = 10
 p.set = c(20,30,50)
-n.set = c(10,30,50,100,200,400,800)
+n.set = c(10,30,50,100,200)
 sigma = 1
 tau = 1
 lambda = 20
-iter = 2
+iter = 100
 error_a = array(0, dim = c(length(p.set), length(n.set), iter))
 error_xi = array(0, dim = c(length(p.set), length(n.set), iter))
 error_a_CP = array(0, dim = c(length(p.set), length(n.set), iter))
@@ -40,7 +40,12 @@ for (i in 1:iter){
       X = ttl(as.tensor(array(lambda,dim=c(1,1,1))), c(list(a), list(b), list(xin)), 1:3)
       Y = X + as.tensor(tau * array(rnorm(p^2*n),dim=c(p,p,n)))
       
-      ftsvd.est = FTSVD(Y, f.grid = c(list(NULL),list(NULL),list(tn)), rank=1, penalty = 1e-5)
+      lambda_max = 0
+      for (k in 1:3){
+        lambda_max = svd(k_unfold(Y,k)@data)$d[1]
+      }
+      Y.scale = Y / (lambda_max / sqrt(n))
+      ftsvd.est = FTSVD(Y.scale, f.grid = c(list(NULL),list(NULL),list(tn)), rank=1)
       error_a[p.ind, n.ind, i] = sqrt(1 - abs(t(ftsvd.est[[2]])%*%a)^2) 
       error_xi[p.ind, n.ind, i] = sqrt(1 - abs(t(ftsvd.est[[4]])%*%xi)^2)
       
@@ -124,7 +129,12 @@ for (i in 1:iter){
       }
       Y = X + sigma * Z #+ as.tensor(tau * array(rnorm(p^2*n),dim=c(p,p,n)))
       
-      ftsvd.est = FTSVD(Y, f.grid = c(list(NULL),list(NULL),list(tn)), rank=1, penalty = 1e-5)
+      lambda_max = 0
+      for (k in 1:3){
+        lambda_max = svd(k_unfold(Y,k)@data)$d[1]
+      }
+      Y.scale = Y / (lambda_max / sqrt(n))
+      ftsvd.est = FTSVD(Y.scale, f.grid = c(list(NULL),list(NULL),list(tn)), rank=1)
       error_xi[p.ind, sigma.ind, i] = sqrt(1 - abs(t(ftsvd.est[[4]])%*%xi)^2)
       
       CP.est = CP(Y, f.grid = c(list(NULL),list(NULL),list(tn)), rank=1)
